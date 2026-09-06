@@ -109,21 +109,16 @@ def zFix (f : Uplc.Term) : Uplc.Term :=
 
 `Poe.PlutusData.decodeByteStringList` is special-cased by name (in
 `translateConstCall`) to this hand-built loop instead of being translated
-from its Lean body — `unListData`'s own output is UPLC's *native* builtin
-list, which the ordinary `case` translation (built for our SoP `constr`
-encoding of Lean's `List`) targets a *different* representation. But
-`case` itself works directly on a native list too, given the right
-branch shape — verified directly against `uplc`: a scrutinee that's a
-native list takes exactly two alternatives, a 2-argument lambda
-(head/tail) for the cons case *first*, then a bare 0-argument term for
-nil *second* (the opposite order from our own SoP convention, and no
-`headList`/`tailList`/`nullList`/`ifThenElse` needed at all — found by
-comparing Plinth's real compiled output against ours, where Plinth's
-version was substantially smaller for exactly this reason). Uses the same
-fixpoint combinator as ordinary recursive decls to walk the list, building
-an ordinary SoP `constr`-encoded `List ByteArray` as it goes, so
-everything downstream of this one primitive is back in the regular
-fragment.
+from its Lean body — `unListData`'s output is UPLC's *native* builtin list,
+a different representation from the SoP `constr` encoding of Lean's `List`
+the ordinary `case` translation targets. `case` works directly on a native
+list given the right branch shape: exactly two alternatives, a 2-argument
+lambda (head/tail) for cons *first*, then a bare 0-argument term for nil
+*second* (the opposite order from the SoP convention, and no `headList`/
+`tailList`/`nullList`/`ifThenElse` needed). Uses the same fixpoint
+combinator as ordinary recursive decls to walk the list, building an SoP
+`constr`-encoded `List ByteArray`, so everything downstream is back in the
+regular fragment.
 -/
 
 /-- Body of `λself. λlst. case lst consBranch nilBranch`, `self`/`lst` at
@@ -162,10 +157,10 @@ def nativeListToSoPTerm : Uplc.Term :=
 ## Generic `Data`-record accessors: `constrTag`/`field0`/`field1`/`field2`/`field8`
 
 Real records like `ScriptContext`/`TxInfo` are just `Constr tag [field0,
-field1, ...]` (verified against `plutus-ledger-api` source:
-`makeIsDataSchemaIndexed` always assigns single-constructor records tag 0,
-sum-type variants their declared index — e.g. `Maybe`'s `Just`/`Nothing`
-are 0/1). These accessors are purely *positional* — the same `field0`
+field1, ...]` (`plutus-ledger-api`'s `makeIsDataSchemaIndexed` assigns
+single-constructor records tag 0, sum-type variants their declared index —
+e.g. `Maybe`'s `Just`/`Nothing` are 0/1). These accessors are purely
+*positional* — the same `field0`
 works on `ScriptContext` (→ `TxInfo`), `ScriptInfo`'s `SpendingScript`
 payload (→ its `TxOutRef`), `Maybe`'s `Just` payload, or a user's own
 single-field `Datum` record — since `unConstrData` gives back the field
@@ -208,10 +203,9 @@ def builtinTable : List (Name × Uplc.Builtin) :=
   -- just `0`): the equation compiler decomposes it via Peano
   -- decomposition — `Nat.decEq tag 0` for the zero case (already mapped
   -- above), then `Nat.sub tag 1` + another `Nat.decEq` for the successor
-  -- case — confirmed directly by dumping the generated mono LCNF for
-  -- exactly this shape. Safe to map straight to real integer subtraction
-  -- here specifically because this generated code only ever calls it
-  -- already knowing `tag ≠ 0` (so `tag - 1` can't go negative); a
+  -- case. Safe to map straight to real integer subtraction here
+  -- specifically because this generated code only ever calls it already
+  -- knowing `tag ≠ 0` (so `tag - 1` can't go negative); a
   -- user-level `Nat` subtraction relying on `Nat.sub`'s own
   -- truncate-at-zero semantics (e.g. computing `3 - 5`) would NOT be
   -- safe to translate this way — this entry is only sound for the
@@ -397,8 +391,8 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
       -- whichever delayed branch it returns.
       return .force (.app (.app (.app (.force (.builtin .ifThenElse)) discr) (.delay thenBranch)) (.delay elseBranch))
     else if cases.typeName == ``Poe.PlutusData.Data then
-      -- `Data` is UPLC's builtin `data` type — real UPLC `case` can't dispatch
-      -- on it at all (confirmed: the CLI rejects `case` on a builtin-typed value).
+      -- `Data` is UPLC's builtin `data` type — UPLC `case` can't dispatch on
+      -- it at all (the CLI rejects `case` on a builtin-typed value).
       -- Two paths: (A) fast path when exactly one branch is live (all others are
       -- `unreach` because a ghost proof rules them out) — just apply the right
       -- `un*Data` accessor unconditionally; (B) multi-branch path when there are
