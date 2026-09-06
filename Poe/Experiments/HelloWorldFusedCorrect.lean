@@ -107,4 +107,20 @@ theorem parse_isSome_iff_wellFormed (ctx : Data) :
       · exact hT.elim
     · exact hWF.elim
 
+/-- **The validator always crashes (aborts) on ill-formed input** — the property
+    we were chasing, here kernel-checked for *every* `ctx`, with nothing in the
+    trusted base but the Lean kernel (no evaluator, no solver, no compiler).
+
+    In the decide style the rejection is an explicit `abort ()` in the Lean
+    source, so it is a plain equation rather than an implicit builtin fault; the
+    translator maps `abort` to UPLC `error`, so the deployed term faults on
+    exactly the inputs `WellFormed` rejects. Corollary of
+    `parse_isSome_iff_wellFormed` + `validatorE_none`. -/
+theorem validatorE_rejects_illformed (ctx : Data) (h : ¬ WellFormed ctx) :
+    validatorE ctx = Poe.Prelude.abort () := by
+  refine validatorE_none ctx ?_
+  cases hp : parse ctx with
+  | none => rfl
+  | some e => exact absurd ((parse_isSome_iff_wellFormed ctx).mp (by simp [hp])) h
+
 end Poe.Experiments.HelloWorldFused
