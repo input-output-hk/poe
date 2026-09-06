@@ -53,7 +53,7 @@ private def txInfoOkB : Data → Bool
   | _                                                            => false
 
 private def scriptInfoOkB : Data → Bool
-  | .constr _ [_, .constr _ [.constr _ [.b _]]] => true
+  | .constr 1 [_, .constr 0 [.constr 0 [.b _]]] => true
   | _                                            => false
 
 private def wellFormedB : Data → Bool
