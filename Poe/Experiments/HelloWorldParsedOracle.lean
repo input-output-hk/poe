@@ -22,7 +22,8 @@ def mkCtx (msg owner : String) (signatories : List String) : Term :=
     , .b "f4".toUTF8, .b "f5".toUTF8, .b "f6".toUTF8, .b "f7".toUTF8
     , .list (signatories.map (fun s => .b s.toUTF8)) ]
   let redeemer  := DataValue.constr 0 [.b msg.toUTF8]
-  let scriptInfo := DataValue.constr 0
+  -- tag 1 = SpendingScript; inner 0/0 = Just/Datum (see `ScriptInfoOk`).
+  let scriptInfo := DataValue.constr 1
     [.b "ignored".toUTF8, .constr 0 [.constr 0 [.b owner.toUTF8]]]
   .const (.data (.constr 0 [txInfo, redeemer, scriptInfo]))
 
