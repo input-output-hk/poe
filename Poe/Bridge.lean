@@ -14,19 +14,18 @@ structural embedding. `Const`/`DataValue` are *not* full isomorphisms —
 they embed only the sub-fragment Poe needs into Blaster's larger
 `Const`/`Data` types (see `Poe.Uplc`'s doc comment for specifics).
 
-Two gaps:
+`ByteArray → Blaster.ByteString` (`toBlasterByteString`) is total and faithful:
+Blaster's `ByteString` is `String`-backed but treats each `Char` as a byte via
+`Char.ofUInt8`/`Char.toUInt8` (see its `ByteString.cons`/`indexByteString`/
+`Repr`), so mapping byte `b ↦ Char.ofUInt8 b` is exactly Blaster's own
+convention — an injective embedding, not a UTF-8 reinterpretation. (An earlier
+version left this `sorry`, wrongly assuming no honest total embedding existed;
+this both removes the `sorryAx` taint from the certificates below and lets
+`native_decide` evaluate compiled terms.)
 
-* Blaster's `ByteString` is backed by a Lean `String`
-  (`structure ByteString where data : String`), not a `ByteArray` like
-  `Poe.Uplc`'s `Const.bytestring`. An arbitrary byte sequence is not valid
-  UTF-8, so there is no honest total `ByteArray → Blaster.ByteString`
-  embedding via reinterpretation. `toBlasterConst`/`toBlasterData` are left
-  `sorry` for `bytestring`/`data`; resolving it (Blaster gaining a real
-  byte-sequence representation, or Poe restricting this certificate
-  direction to the `ByteArray`-free fragment) is follow-up work.
-* `Poe.Uplc.DataValue` is missing two of real `Data`'s five cases (`Map`
-  and `I`, integer-as-`Data` — see `Poe.Uplc`'s doc comment), so
-  `toBlasterData` can't represent an integer-literal `Data` value yet. -/
+Remaining gap: `Poe.Uplc.DataValue` is missing two of real `Data`'s five cases
+(`Map` and `I`, integer-as-`Data` — see `Poe.Uplc`'s doc comment), so
+`toBlasterData` can't represent an integer-literal `Data` value yet. -/
 
 namespace Poe.Bridge
 
@@ -63,17 +62,20 @@ def toBlasterBuiltin : Poe.Uplc.Builtin → Term.BuiltinFun
   | .sndPair => .SndPair
   | .chooseData => .ChooseData
 
-/-- See the file doc comment: `bytestring`/`data` are the one real gap,
-    `ByteArray` has no honest total embedding into Blaster's
-    `String`-backed `ByteString` yet. -/
+/-- Byte `b ↦ Char.ofUInt8 b`, matching Blaster's own byte↔`Char` convention
+    (`ByteString.cons`/`indexByteString`/`Repr` all use `Char.ofUInt8`/
+    `Char.toUInt8`). Total and injective. -/
+def toBlasterByteString (b : ByteArray) : PlutusCore.ByteString.ByteString :=
+  { data := ⟨b.toList.map Char.ofUInt8⟩ }
+
 def toBlasterData : Poe.Uplc.DataValue → PlutusCore.Data.Data
   | .constr tag fields => .Constr (Int.ofNat tag) (fields.map toBlasterData)
   | .list xs => .List (xs.map toBlasterData)
-  | .b _ => sorry -- ByteArray -> Blaster's String-backed ByteString: no honest total embedding yet
+  | .b b => .B (toBlasterByteString b)
 
 def toBlasterConst : Poe.Uplc.Const → Term.Const
   | .integer i => .Integer i
-  | .bytestring _ => sorry -- see toBlasterData
+  | .bytestring b => .ByteString (toBlasterByteString b)
   | .string s => .String s
   | .bool b => .Bool b
   | .unit => .Unit
@@ -146,15 +148,9 @@ theorem double_certificate :
     Poe.Examples.double]
   rfl
 
-/- `#print axioms` reports `sorryAx` here, but the certificate is fully
-   proved for `double`: `doubleUplcTerm` has no `.const` node, so
-   `toBlasterTerm`'s reduction never touches the `toBlasterConst` branch.
-   The taint comes from Lean's per-declaration axiom tracking —
-   `toBlasterTerm` is one general function over all of `Poe.Uplc.Term`, one
-   branch calls `toBlasterConst` (which has `sorry`s for `bytestring`/
-   `data`), and that taints the whole definition regardless of which inputs
-   actually reach that branch. Resolving the `ByteArray`/`ByteString` gap
-   (see file doc comment) would clear it. -/
+/- `#print axioms` now reports only `propext`/`Classical.choice`/`Quot.sound`
+   — no `sorryAx`, since `toBlasterByteString` closed the last `sorry` in the
+   bridge (see file doc comment). -/
 #print axioms double_certificate
 
 /-!
@@ -229,9 +225,7 @@ theorem absInt_certificate :
       PlutusCore.Bool.ifThenElse, PlutusCore.UPLC.BuiltinFunctions.Integer.subtractInteger,
       PlutusCore.Integer.subtractInteger, Int.sub]
 
--- Same `sorryAx` taint as `double_certificate`, same reason (through
--- `toBlasterConst`/`toBlasterTerm`, not a gap in *this* proof) — see
--- that theorem's own note.
+-- Also `sorryAx`-free now (see `double_certificate`'s note).
 #print axioms absInt_certificate
 
 end Poe.Bridge
