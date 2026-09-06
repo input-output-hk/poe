@@ -145,25 +145,8 @@ def decodeByteStringListTerm : Uplc.Term :=
   .lam "d" (.app (zFix (.lam "self" (.lam "lst" dataListLoopBody)))
                  (.app (.builtin .unListData) (.var 0)))
 
-/-!
-## `unListData` boundary: native → SoP `List Data` conversion
-
-`unListData` yields UPLC's *native* builtin list (cons at case-index 0,
-nil at index 1 — the opposite of our SoP `constr` encoding of Lean's
-`List`, which is nil=0/cons=1). `markNative` lets the translator use the
-native `case` shape *within* the function doing the `unListData`, but that
-flag is a local-context property: it does not survive being passed as an
-argument to another top-level function (e.g. `isByteStringListB`'s
-`.list xs => allAreB xs`, where `allAreB` is compiled independently and
-therefore `case`s its parameter with the SoP ordering). Feeding a native
-list into SoP-ordered `case` picks the wrong branch and then applies a
-nullary branch to the cons cell's two fields ("apply non-function").
-
-Fix: walk the native list once at the `unListData` boundary and rebuild it
-as an ordinary SoP `constr`-encoded `List Data` (elements kept as `Data`,
-unchanged), so *everything* downstream — including cross-function calls —
-sees one uniform representation. Same fixpoint/loop shape as
-`decodeByteStringList`, minus the per-element `unBData`. -/
+/-- Loop body for `nativeListToSoPTerm`; same de Bruijn layout as
+    `dataListLoopBody`, keeping each element as `Data` (no `unBData`). -/
 private def nativeListToSoPBody : Uplc.Term :=
   let lst : Uplc.Term := .var 0
   let consBranch :=
@@ -171,7 +154,9 @@ private def nativeListToSoPBody : Uplc.Term :=
   let nilBranch := Uplc.Term.constr 0 []
   .case lst [consBranch, nilBranch]
 
-/-- `(fix loop)` taking a *native* list, returning a SoP `List Data`. -/
+/-- Rebuilds a *native* list (as `decodeByteStringList` describes) into an
+    SoP `constr`-encoded `List Data`, so downstream `case`s — including
+    ones in independently-compiled callees — use one representation. -/
 def nativeListToSoPTerm : Uplc.Term :=
   zFix (.lam "self" (.lam "lst" nativeListToSoPBody))
 
@@ -454,9 +439,6 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
           let body ← translateCode (ctx.bind byteParam.fvarId) code
           return .app (.lam byteParam.binderName.toString body) (.app (.builtin .unBData) discr)
         | ``Poe.PlutusData.Data.list, #[listParam] =>
-          -- Convert native → SoP at the `unListData` boundary (see
-          -- `nativeListToSoPTerm`): bind as an ordinary SoP `List Data`, not
-          -- native, so downstream code (incl. cross-function calls) is uniform.
           let body ← translateCode (ctx.bind listParam.fvarId) code
           return .app (.lam listParam.binderName.toString body)
             (.app nativeListToSoPTerm (.app (.builtin .unListData) discr))
@@ -498,9 +480,6 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
             let ps := allPs.filter fun p => !p.type.isErased
             match ps with
             | #[listParam] =>
-              -- Convert native → SoP at the `unListData` boundary (see
-              -- `nativeListToSoPTerm`) — same reasoning as the single-branch
-              -- `.list` fast path above.
               let body ← translateCode (ctx.bind listParam.fvarId) c
               pure (.app (.lam listParam.binderName.toString body)
                 (.app nativeListToSoPTerm (.app (.builtin .unListData) discr)))
