@@ -1,5 +1,6 @@
 import Poe.Experiments.ValidatorStyles
 import Poe.Experiments.HelloWorldParsed
+import Poe.Experiments.HelloWorldFused
 import Poe.Oracle
 import Poe.TplcOracle
 
@@ -129,16 +130,25 @@ path plus the native→SoP list conversion at the `unListData` boundary (see
 runs the full wellformedness check *and* re-decodes the fields, but it is in
 the fragment and evaluates correctly (see `HelloWorldParsedOracle.lean`). -/
 
+/-! `HelloWorldFused.validatorE` (style 6) decides `WellFormed` in one traversal
+(`parse : Data → Option Evidence`) instead of 2E's decide-then-re-decode, so it
+is smaller (882 vs 2E's 1233) while still emitting the same 10 `chooseData`
+nodes — `Option` totality demands the defensive dispatch. It is proven to accept
+exactly `WellFormed` and to extract the right fields (`HelloWorldFusedCorrect`,
+sorry-free), so it is 2E-grade precision at 6's size. -/
+
 #eval show Lean.CoreM Unit from do
   let s1E ← flatSize ``Poe.Examples.HelloWorld.validatorE
   let s2E ← flatSize ``Poe.Experiments.HelloWorldParsed.validatorE
   let s3E ← flatSize ``Poe.Experiments.ValidatorDecidable.validatorEDecidable
   let s4E ← flatSize ``Poe.Experiments.HelloWorldSubtype.validatorBSubtype
+  let s6  ← flatSize ``Poe.Experiments.HelloWorldFused.validatorE
   IO.println "Flat-encoded sizes (bytes):"
   IO.println s!"  Aiken hello_world (reference):  285"
   IO.println s!"  style4E / style5E (Subtype):     {s4E}"
   IO.println s!"  style1E (Bool, ghost wf):        {s1E}"
   IO.println s!"  style2E (Parsed, decided wf):     {s2E}"
+  IO.println s!"  style6  (Fused, proven precise):  {s6}"
   IO.println s!"  style3E (Decidable):             {s3E}"
 
 end Poe.Experiments.ValidatorStyles
