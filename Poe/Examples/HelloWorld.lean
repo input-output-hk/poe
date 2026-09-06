@@ -8,32 +8,37 @@ namespace Poe.Examples.HelloWorld
 open Poe.PlutusData (Data decodeByteStringList IsByteStringList)
 open Poe.Lib.DataDecoding (elemBytes)
 
-/-- `redeemer` really is `Constr _ [msg]` with `msg` a bytestring —
-    pattern-matched all the way to `.b`, so there's nothing left to
-    assert once the shape matches. -/
+/-- `redeemer` really is `Constr 0 [msg]` with `msg` a bytestring: tag `0`
+    because hello_world's redeemer is a single-constructor record, and the
+    real `FromData` decoder for such a type rejects any other tag (`Redeemer`
+    itself is a transparent `newtype … BuiltinData`, so it adds no wrapper).
+    Pattern-matched all the way to `.b`, so there's nothing left to assert
+    once the shape matches. -/
 def RedeemerOk (redeemer : Data) : Prop :=
   match redeemer with
-  | .constr _ [.b _] => True
+  | .constr 0 [.b _] => True
   | _ => False
 
 /-- The redeemer's message, given a proof its shape is honest. -/
 def decodeMessage : ∀ redeemer, RedeemerOk redeemer → ByteArray
-  | .constr _ [.b msgBytes], _ => msgBytes
+  | .constr 0 [.b msgBytes], _ => msgBytes
 
-/-- `txInfo` really has 8 filler fields, then the signatories list, then
-    whatever real `TxInfo`'s other 7 fields are — pattern-matched down
-    to `sigListData` directly, `IsByteStringList` on it because a
-    variable-length list can't be pattern-matched any further (no finite
-    pattern says "however many elements, every one a bytestring"). -/
+/-- `txInfo` really is `Constr 0` with 8 filler fields, then the signatories
+    list, then real `TxInfo`'s other fields — tag `0` because `TxInfo` is a
+    single-constructor record (index confirmed against
+    `PlutusLedgerApi.V3.Contexts`: `txInfoSignatories` sits at field 8).
+    Pattern-matched down to `sigListData` directly, `IsByteStringList` on it
+    because a variable-length list can't be pattern-matched any further (no
+    finite pattern says "however many elements, every one a bytestring"). -/
 def TxInfoOk (txInfo : Data) : Prop :=
   match txInfo with
-  | .constr _ (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _) =>
+  | .constr 0 (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _) =>
       IsByteStringList sigListData
   | _ => False
 
 /-- `txInfo`'s signatories, given a proof its shape is honest. -/
 def decodeSignatories : ∀ txInfo, TxInfoOk txInfo → List ByteArray
-  | .constr _ (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _), h =>
+  | .constr 0 (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _), h =>
       decodeByteStringList sigListData h
 
 /-- `scriptInfo` really is `Constr 1 [_, Constr 0 [Constr 0 [.b owner]]]` —
