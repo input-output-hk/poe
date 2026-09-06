@@ -90,8 +90,6 @@ guarded behind a lambda):
 
 so that `fix (λself. body[self])` reduces, on each call to `self`, back to
 `body[fix (λself. body[self])]` — tying the knot without a named binding.
-Verified standalone against the uplc oracle before wiring in (a countdown
-function via this exact combinator, 5 steps, evaluates to 5).
 -/
 
 /-- `λx. f (λv. (x x) v)`, referencing `f` as the (as yet unbound) variable
@@ -175,21 +173,11 @@ list regardless of what the record "means". `field8` exists only because
 `TxInfo.txInfoSignatories` happens to sit at index 8 in the real 16-field
 record.
 
-`case` on a builtin *pair* works the same way as on a list — no `fstPair`/
-`sndPair` needed, just one alternative, a 2-argument lambda destructuring
-both components directly — and this did get tried here too. But unlike
-`decodeByteStringList` (a single loop body, reused via the fixpoint
-combinator regardless of the list's length), these accessors *unroll* a
-fixed number of `case`s at translation time, one per field index walked.
-Measured directly (compiled size of `validateScriptContext`, whose deepest
-accessor is `field8`): the naive all-`case` version came to 384 bytes,
-*larger* than the original 364 — each unrolled level pays for a fresh
-`(lam h (lam t ...)) (error)` wrapper, which costs more than the single
-builtin application `tailList` chains this replaced. So the pair/list
-`case` trick is a real win only for genuinely-recursive loops; these
-purely-positional, statically-unrolled accessors keep the original
-`fstPair`/`sndPair`/`headList`/`tailList` chains (confirmed smallest: 351
-bytes once `decodeByteStringList` alone switched to `case`). -/
+These are purely positional, so they use `fstPair`/`sndPair`/`headList`/
+`tailList` chains rather than the `case` trick `decodeByteStringList` uses:
+`case` pays for a fresh `(lam h (lam t ...)) (error)` wrapper per field
+level, which for a fixed unrolled depth costs more than the builtin chain —
+the `case` form only wins for genuinely-recursive loops. -/
 
 private def fieldsOfTerm (blob : Uplc.Term) : Uplc.Term :=
   .app (.force (.force (.builtin .sndPair))) (.app (.builtin .unConstrData) blob)
@@ -212,11 +200,9 @@ def builtinTable : List (Name × Uplc.Builtin) :=
   , (``ByteArray.instBEq.beq, .equalsByteString), (``String.toUTF8, .encodeUtf8)
   , (``Int.decEq, .equalsInteger), (``Nat.decEq, .equalsInteger)
   , (``Poe.PlutusData.unBData, .unBData)
-  -- `Int.fdiv`, not `Int.ediv`/`Int.tdiv`, and not the `/` notation
-  -- (which resolves to `Int.ediv`): checked directly against `uplc`,
-  -- real `divideInteger` floors toward -∞ (`divideInteger 7 (-2) = -4`),
-  -- which only `Int.fdiv` matches — `Int.ediv`/`Int.tdiv`/`/` all give
-  -- `-3` for that same input, silently the wrong function.
+  -- `Int.fdiv`, not `Int.ediv`/`Int.tdiv` (nor `/`, which is `Int.ediv`):
+  -- `divideInteger` floors toward -∞ (`divideInteger 7 (-2) = -4`), which
+  -- only `Int.fdiv` matches — the others give `-3` for that input.
   , (``Int.fdiv, .divideInteger)
   ]
 
@@ -229,15 +215,12 @@ def translateArg (ctx : Ctx) : Arg → CoreM Uplc.Term
     throwError "translator: erased/type argument reached D1 (out of fragment)"
 
 /-- Ghost (`Prop`-typed, hence `lcErased`) arguments — e.g. a `y ≠ 0` proof
-    handed to a partial builtin like division — carry no runtime content
-    and are dropped before translation, not passed through `translateArg`
-    (which still rejects a genuinely-untranslatable erased/type argument
-    reaching it any other way). Without this, calling such a function
-    failed outright ("erased/type argument reached D1"), confirmed
-    directly: `f x y (proof : y ≠ 0)` dumps to mono LCNF as `f x y ◾`, the
-    `◾` being exactly the `Arg.erased` case this filters out. Must match
-    `translateDecl`'s equally-necessary filtering of erased *parameters*
-    on the callee side, or arities disagree. -/
+    handed to a partial builtin like division — carry no runtime content and
+    are dropped here (they dump to mono LCNF as `◾`, the `Arg.erased` case),
+    rather than passed through `translateArg` (which still rejects a
+    genuinely-untranslatable erased/type argument reaching it any other way).
+    Must match `translateDecl`'s filtering of erased *parameters* on the
+    callee side, or arities disagree. -/
 def translateArgs (ctx : Ctx) (args : Array Arg) : CoreM (List Uplc.Term) :=
   (args.toList.filter fun | .fvar _ => true | .erased | .type _ => false).mapM (translateArg ctx)
 
@@ -252,14 +235,10 @@ def ctorNames (typeName : Name) : CoreM (Array Name) := do
 /-- A joint match against an erased proof (e.g. `match d, h with | .constr
     _ fs, _ => ...`, `h : WellFormed d`) rules out every shape but one —
     Lean compiles the ruled-out shapes to `Code.unreach` (`⊥`), not a real
-    branch. This is the pattern every `Data`/native-list destructure in
-    `HelloWorld.lean` uses, so both of those cases compilers key off it:
-    trust the single live branch unconditionally instead of emitting a
-    real multi-way dispatch — which real UPLC's `case` can't do on a
-    builtin `data` value anyway (confirmed directly: the CLI itself
-    rejects a `case` whose scrutinee is a builtin-typed value, "data isn't
-    supported in 'case'"). A cases node with more than one live branch is
-    a genuine multi-way runtime dispatch, out of this fragment for now. -/
+    branch. Trust the single live branch unconditionally instead of a
+    multi-way dispatch, which UPLC's `case` can't do on a builtin `data`
+    value anyway ("data isn't supported in 'case'"). Returns the one live
+    alt; more than one live branch is out of this single-branch fragment. -/
 def singleRealAlt (cases : Cases) : CoreM (Name × Array Param × Code) := do
   let isUnreach : Alt → Bool
     | .alt _ _ (.unreach _) => true
@@ -381,14 +360,11 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
     let body ← translateCode (ctx.bind decl.fvarId) k
     return .app (.lam decl.binderName.toString body) v
   | .return fvarId => return .var (← ctx.lookup fvarId)
-  -- Lean's own "this branch is unreachable" marker (printed `⊥`) — reached
-  -- via a caller-supplied proof ruling a case out (agda2hs's `error`
-  -- trick, ported: see `Poe.Prelude.poeError`). Verified directly: a
-  -- branch like `poeError "empty list"` doesn't survive as a named call
-  -- to special-case (Lean's optimizer fully inlines it away first) — it
-  -- compiles straight to this structural `Code.unreach` node instead, so
-  -- this handles it (and any other route to an impossible branch, e.g. a
-  -- bare `False.elim`) uniformly rather than by name.
+  -- Lean's "this branch is unreachable" marker (printed `⊥`) — reached via a
+  -- caller-supplied proof ruling a case out (agda2hs's `error` trick, ported:
+  -- see `Poe.Prelude.poeError`). A `poeError "..."` branch inlines to this
+  -- structural node, not a named call, so handling it here covers any route
+  -- to an impossible branch (e.g. a bare `False.elim`) uniformly.
   | .unreach _ => return .error
   | .cases cases => do
     let discr := Uplc.Term.var (← ctx.lookup cases.discr)
@@ -426,13 +402,10 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
         | ``Poe.PlutusData.Data.constr, #[tagParam, fieldsParam] =>
           let ctx' := (ctx.bind tagParam.fvarId).bind fieldsParam.fvarId |>.markNative fieldsParam.fvarId
           let body ← translateCode ctx' code
-          -- Both values must apply from *outside* the lambdas they fill, as
-          -- siblings in `.app` nodes (`applyArgs`'s usual convention) — not
-          -- nested inside an inner lambda's body, which would shift the
-          -- de Bruijn index `discr` was computed against (caught directly:
-          -- placing `fieldsOfTerm discr` inside the tag-lambda's body made
-          -- `uplc` apply `unConstrData` to the tag integer instead of the
-          -- real `Data` value).
+          -- Both values apply from *outside* the lambdas they fill, as
+          -- siblings in `.app` nodes (`applyArgs`'s convention) — not nested
+          -- inside an inner lambda's body, which would shift the de Bruijn
+          -- index `discr` was computed against.
           return applyArgs (.lam tagParam.binderName.toString (.lam fieldsParam.binderName.toString body))
             [constrTagTerm discr, fieldsOfTerm discr]
         | ``Poe.PlutusData.Data.b, #[byteParam] =>
@@ -456,10 +429,9 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
           match cases.alts.find? (fun | .alt n .. => n == ctorName | _ => false) with
           | some (.alt _ ps c) => some (ps, c)
           | _                  => none
-        -- Constr branch: bind tag + fields via unConstrData, same convention as fast path.
-        -- NOTE: use `pure` not `return` here — `return` inside a `let x ← do { ... }` block
-        -- escapes to the outer `translateCode` `do` scope in Lean 4's do-notation. `pure`
-        -- stays local to the inner block and binds `constrBranch` correctly.
+        -- Each branch: bind via the matching `un*Data`, same as the fast path.
+        -- Use `pure` not `return` in these inner `do` blocks — `return` would
+        -- escape to the outer `translateCode` scope, not bind the branch.
         let constrBranch : Uplc.Term ← do
           match findAlt ``Poe.PlutusData.Data.constr with
           | some (allPs, c) =>
@@ -511,10 +483,9 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
     else if cases.typeName == ``List && ctx.isNative cases.discr then
       -- Native UPLC list (see `Ctx.nativeListVars`'s doc comment): `case`
       -- takes exactly two alternatives here, the *opposite* order/shape
-      -- from the SoP convention below — cons first as a 2-arg lambda,
-      -- nil second as a bare term (verified against `uplc` directly, see
-      -- `dataListLoopBody`) — and the cons branch's tail stays native for
-      -- any further destructuring.
+      -- from the SoP convention below — cons first as a 2-arg lambda, nil
+      -- second as a bare term (see `dataListLoopBody`) — and the cons
+      -- branch's tail stays native for any further destructuring.
       let some (.alt _ consParams consCode) :=
           cases.alts.find? (fun | .alt n .. => n == ``List.cons | .default _ => false)
         | throwError "translator: native List cases missing a List.cons alternative"
@@ -571,10 +542,8 @@ partial def translateDecl (decl : Decl) : CoreM Uplc.Term := do
   let recursive := codeMentionsSelf decl.name code
   -- Ghost (`lcErased`-typed) params — e.g. a `y ≠ 0` proof — get no lambda
   -- binder at all, matching `translateArgs` dropping the corresponding
-  -- argument at every call site (confirmed directly: without this, a
-  -- declaration like `f (x y : Int) (_h : y ≠ 0) : Int` compiled with an
-  -- extra, permanently-unused third lambda parameter every caller would
-  -- then have to know to apply to *something*).
+  -- argument at every call site (or the callee gets an extra unused
+  -- parameter callers wouldn't apply).
   let params := decl.params.filter fun p => !p.type.isErased
   let ctx0 : Ctx := if recursive then { depth := 1, self := some (decl.name, 0) } else {}
   let ctx := params.foldl (init := ctx0) (·.bind ·.fvarId)
