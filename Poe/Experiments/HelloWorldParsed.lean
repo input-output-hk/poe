@@ -31,7 +31,7 @@ open Poe.Lib.DataDecoding (elemBytes)
 -- ── Boolean decision procedures ──────────────────────────────────────
 
 private def redeemerOkB : Data → Bool
-  | .constr _ [.b _] => true
+  | .constr 0 [.b _] => true
   | _                => false
 
 private def allAreB : List Data → Bool
@@ -49,7 +49,7 @@ private def isByteStringListB : Data → Bool
   | _        => false
 
 private def txInfoOkB : Data → Bool
-  | .constr _ (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: s :: _) => isByteStringListB s
+  | .constr 0 (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: s :: _) => isByteStringListB s
   | _                                                            => false
 
 private def scriptInfoOkB : Data → Bool

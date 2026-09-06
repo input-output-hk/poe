@@ -60,21 +60,25 @@ open Poe.PlutusData (Data decodeByteStringList IsByteStringList)
 open Poe.Lib.DataDecoding (elemBytes elemBytes_iff ByteArray.beq_iff_eq)
 
 -- Shared shape predicates and decoders every style below builds on.
+-- Tag `0` (not a wildcard): both are single-constructor types, so the real
+-- FromData decoder rejects any other tag; TxInfo's signatories sit at field 8
+-- (confirmed against PlutusLedgerApi.V3.Contexts). Redeemer is a transparent
+-- newtype, so its field is hello_world's single-constructor redeemer record.
 def RedeemerOk (redeemer : Data) : Prop :=
   match redeemer with
-  | .constr _ [.b _] => True
+  | .constr 0 [.b _] => True
   | _ => False
 
 def decodeMessage : ∀ redeemer, RedeemerOk redeemer → ByteArray
-  | .constr _ [.b msgBytes], _ => msgBytes
+  | .constr 0 [.b msgBytes], _ => msgBytes
 
 def TxInfoOk (txInfo : Data) : Prop :=
   match txInfo with
-  | .constr _ (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _) => IsByteStringList sigListData
+  | .constr 0 (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _) => IsByteStringList sigListData
   | _ => False
 
 def decodeSignatories : ∀ txInfo, TxInfoOk txInfo → List ByteArray
-  | .constr _ (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _), h => decodeByteStringList sigListData h
+  | .constr 0 (_ :: _ :: _ :: _ :: _ :: _ :: _ :: _ :: sigListData :: _), h => decodeByteStringList sigListData h
 
 -- Tag `1` (not a wildcard): real ScriptInfo's SpendingScript is index 1
 -- (MintingScript=0, SpendingScript=1, ...), and CertifyingScript/
