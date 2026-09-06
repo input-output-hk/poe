@@ -3,17 +3,33 @@ import Poe.Bridge
 import Poe.Examples.HelloWorld
 
 /-!
-# Whole-validator CEK certificates
+# Whole-validator certificates at the PLC / CEK level
 
-`gen_uplc` (transcribe the real compiled term) + the now-total `toBlasterData`
-(`Poe.Bridge.toBlasterByteString`) let `native_decide` evaluate a whole
-validator on a concrete input through Blaster's CEK machine. So we can certify
-its actual on-chain behaviour — accept and reject — on real `ScriptContext`
-inputs, not just hand-written toy terms.
+This is the **PLC-level** counterpart to `HelloWorldFusedCorrect` (which is the
+Lean level). The Lean/PLC division of labour:
+  - **Lean level** (`*Correct`, kernel-checked): shape precision, faithful
+    extraction, and the `Bool` business decision. Cannot speak about `()`-vs-
+    error — `Unit` is a subsingleton in Lean.
+  - **PLC level** (here): that the compiled term actually *halts* (accepts) or
+    *errors* (rejects) — the `Halt`/`Error` distinction that only exists once we
+    run the term. This is where accept-vs-reject becomes real.
+
+`gen_uplc` transcribes the real compiled term; the now-total `toBlasterData`
+(`Poe.Bridge.toBlasterByteString`) lets `native_decide` evaluate it on a concrete
+input through Blaster's CEK machine.
+
+**Trust caveats (why these are weaker than the Lean-level proofs):**
+* `native_decide` trusts the Lean compiler + native runtime (`ofReduceBool`,
+  `trustCompiler`), not just the kernel.
+* Blaster reports fuel exhaustion *before* halting as `Error` too, so
+  `isErr = true` alone conflates "faulted" with "ran out of fuel". The two
+  theorems are only meaningful *together, at the same fuel*: `accepts_wellformed`
+  witnesses that 5000 fuel is enough to halt, so `rejects_illformed`'s `Error` at
+  5000 is a genuine fault, not exhaustion. `native_decide` on concrete inputs
+  only — no `∀`-quantified guarantee.
 
 `validatorETerm` is `HelloWorld.validatorE` as the translator compiles it: a
-`Data → Unit` fast-path term (0 `chooseData`) that faults on a wrong shape. The
-theorems below are the reject and accept guarantees at the UPLC level.
+`Data → Unit` fast-path term (0 `chooseData`) that faults on a wrong shape.
 -/
 
 namespace Poe.Experiments.HelloWorldCrashCert

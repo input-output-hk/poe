@@ -1,22 +1,37 @@
 import Poe.Experiments.HelloWorldFused
 
 /-!
-# Precision of the fused decider (Lean-source level)
+# Fused validator: what's proved at the LEAN level
 
-Two guarantees about `HelloWorldFused.parse`, both about the `Data` model —
-independent of any compilation style:
+Everything here is about the `Data`/`Bool` model and is **kernel-checked**
+(`propext`/`Quot.sound` only — no evaluator, solver, or compiler in the trusted
+base). These hold independent of any compilation style.
 
 * `parse_isSome_iff_wellFormed`: the cheap fused decider accepts *exactly* the
-  audited `WellFormed` predicate — no false accepts, no false rejects.
-* `parse_some_faithful`: when it accepts, the extracted `owner`/`msg`/`sigs`
-  really are the bytes at their ledger-defined positions ("owner is definitely
-  owner" — the `SpendingScript`→`Just`→`Datum`→`.b` field, etc.).
+  audited `WellFormed` — no false accepts, no false rejects.
+* `parse_some_faithful`: when it accepts, `owner`/`msg`/`sigs` really are the
+  bytes at their ledger positions ("owner is definitely owner").
+* `validatorCore_iff`: the business decision (a `Bool`) is `true` exactly when
+  the message and owner-membership conditions hold.
+
+**What is NOT provable here — the Lean/PLC boundary.** The deployed `validatorE`
+returns `Unit`, and `Unit` is a subsingleton, so `() = abort ()` in Lean: success
+and failure are *indistinguishable* at the Lean level. Any `validatorE ctx =
+abort ()` / `= ()` statement is subsingleton-trivial. The genuine "accepts with
+`()` vs errors" distinction exists only at the **PLC/CEK level** (`Halt` vs
+`Error`) — see `Poe.Experiments.HelloWorldCrashCert`, which pays a compiler-trust
+cost (`native_decide`). So the division of labour is:
+  - **Lean level**: shape precision, faithful extraction, and the `Bool`
+    decision — meaningful, cheap, kernel-checked (this file).
+  - **PLC level**: that the `Bool` decision compiles to accept/reject
+    (`Halt`/`Error`) — `HelloWorldCrashCert`.
 -/
 
 namespace Poe.Experiments.HelloWorldFused
 
 open Poe.PlutusData (Data IsByteStringList)
 open Poe.Examples.HelloWorld (WellFormed TxInfoOk RedeemerOk ScriptInfoOk)
+open Poe.Lib.DataDecoding (elemBytes_iff ByteArray.beq_iff_eq)
 
 /-- `parseSigs` inverts `List.map .b`: it succeeds on an all-bytestring list,
     returning the underlying bytes. -/
@@ -106,5 +121,15 @@ theorem parse_isSome_iff_wellFormed (ctx : Data) :
         · exact hR.elim
       · exact hT.elim
     · exact hWF.elim
+
+/-- **Business logic (Lean level)**: the fused validator's `Bool` decision is
+    `true` exactly when the message is "Hello, World!" and the owner is a
+    signatory. Kernel-checked. This is the meaningful form of "returns true /
+    returns false" — stated on the `Bool`, where `true ≠ false`, *not* on the
+    `Unit` deployable (where success and abort collapse; see the header). Combine
+    with `parse_some_faithful` to read `e.owner` as the genuine datum owner. -/
+theorem validatorCore_iff (e : Evidence) :
+    validatorCore e = true ↔ e.msg = "Hello, World!".toUTF8 ∧ e.owner ∈ e.sigs := by
+  simp only [validatorCore, Bool.and_eq_true, ByteArray.beq_iff_eq, elemBytes_iff]
 
 end Poe.Experiments.HelloWorldFused
