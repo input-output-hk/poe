@@ -1,6 +1,8 @@
 import Poe.Translate
+import Poe.TranslateTplc
 import Poe.Uplc
 import Poe.Emit
+import Poe.EmitTplc
 
 /-!
 # `gen_uplc`: splice a translator result into a referenceable `def`
@@ -42,4 +44,16 @@ elab "poe " path:str " := " src:ident : command => do
   let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo src
   let term ← liftCoreM <| Poe.Translate.translate declName
   let text := Poe.Emit.emit term
+  IO.FS.writeFile path.getString text
+
+/-- Compile `src` to Typed PLC and write it to `path` as a text file.
+    Runs at elaboration time, so `lake build` produces the file as a side-effect.
+
+    ```
+    poe_tplc "out/validator.tplc" := MyModule.validatorE
+    ``` -/
+elab "poe_tplc " path:str " := " src:ident : command => do
+  let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo src
+  let term ← liftCoreM <| Poe.TranslateTplc.translate declName
+  let text := Poe.EmitTplc.emit term
   IO.FS.writeFile path.getString text
