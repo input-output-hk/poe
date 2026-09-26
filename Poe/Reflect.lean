@@ -1,5 +1,6 @@
 import Poe.Translate
 import Poe.Uplc
+import Poe.Emit
 
 /-!
 # `gen_uplc`: splice a translator result into a referenceable `def`
@@ -30,3 +31,15 @@ elab "gen_uplc " nm:ident " := " src:ident : command => do
   liftCoreM <| addAndCompile <| Declaration.defnDecl {
     name, levelParams := [], type := mkConst ``Poe.Uplc.Term,
     value := ToExpr.toExpr term, hints := .regular 0, safety := .safe }
+
+/-- Compile `src` to UPLC and write it to `path` as a `(program 1.1.0 ...)` text file.
+    Runs at elaboration time, so `lake build` produces the file as a side-effect.
+
+    ```
+    poe "out/validator.uplc" := MyModule.validatorE
+    ``` -/
+elab "poe " path:str " := " src:ident : command => do
+  let declName ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo src
+  let term ← liftCoreM <| Poe.Translate.translate declName
+  let text := Poe.Emit.emit term
+  IO.FS.writeFile path.getString text
