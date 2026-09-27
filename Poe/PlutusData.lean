@@ -126,7 +126,17 @@ partial def constrTag (d : Data) (h : IsConstr d) : Int := constrTag d h
 partial def field0 (d : Data) (h : HasFieldAt d 0) : Data := field0 d h
 partial def field1 (d : Data) (h : HasFieldAt d 1) : Data := field1 d h
 partial def field2 (d : Data) (h : HasFieldAt d 2) : Data := field2 d h
+partial def field3 (d : Data) (h : HasFieldAt d 3) : Data := field3 d h
+partial def field7 (d : Data) (h : HasFieldAt d 7) : Data := field7 d h
 partial def field8 (d : Data) (h : HasFieldAt d 8) : Data := field8 d h
+
+/-- Ghost-only: `d` really is an `I` (integer) value. -/
+def IsI (d : Data) : Prop := ∃ n : Int, d = .i n
+
+/-- Maps to `unIData` builtin; special-cased by name in `Translate`. -/
+opaque unIData (d : Data) (_ : IsI d) : Int := 0
+
+axiom unIData_spec (n : Int) (h : IsI (.i n)) : unIData (.i n) h = n
 
 axiom constrTag_spec (tag : Nat) (fields : List Data) (h : IsConstr (.constr tag fields)) :
     constrTag (.constr tag fields) h = Int.ofNat tag
@@ -142,6 +152,14 @@ axiom field1_spec (tag : Nat) (f0 f1 : Data) (rest : List Data)
 axiom field2_spec (tag : Nat) (f0 f1 f2 : Data) (rest : List Data)
     (h : HasFieldAt (.constr tag (f0 :: f1 :: f2 :: rest)) 2) :
     field2 (.constr tag (f0 :: f1 :: f2 :: rest)) h = f2
+
+axiom field3_spec (tag : Nat) (f0 f1 f2 f3 : Data) (rest : List Data)
+    (h : HasFieldAt (.constr tag (f0 :: f1 :: f2 :: f3 :: rest)) 3) :
+    field3 (.constr tag (f0 :: f1 :: f2 :: f3 :: rest)) h = f3
+
+axiom field7_spec (tag : Nat) (f0 f1 f2 f3 f4 f5 f6 f7 : Data) (rest : List Data)
+    (h : HasFieldAt (.constr tag (f0 :: f1 :: f2 :: f3 :: f4 :: f5 :: f6 :: f7 :: rest)) 7) :
+    field7 (.constr tag (f0 :: f1 :: f2 :: f3 :: f4 :: f5 :: f6 :: f7 :: rest)) h = f7
 
 axiom field8_spec (tag : Nat) (f0 f1 f2 f3 f4 f5 f6 f7 f8 : Data) (rest : List Data)
     (h : HasFieldAt (.constr tag (f0 :: f1 :: f2 :: f3 :: f4 :: f5 :: f6 :: f7 :: f8 :: rest)) 8) :
