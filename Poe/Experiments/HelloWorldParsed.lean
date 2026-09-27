@@ -11,13 +11,19 @@ immediately consumed by `parse`, which extracts structured values in one
 traversal; `validatorCore` then works entirely on `ByteArray` and
 `List ByteArray` with no `Data` in scope.
 
-Two key theorems:
+Two structural theorems:
 - `validatorE_bad`:  `¬WellFormed ctx → validatorE ctx = abort ()`
 - `validatorE_good`: `WellFormed ctx  → validatorE ctx = check (validatorCore (parse ctx h))`
 
-The first is only provable here (not with the ghost-precondition style)
-because the else branch is explicit Lean code, not an invisible UPLC
-unreachable node.
+**Caveat (subsingleton):** these are *definitional* — they say which branch
+`validatorE` unfolds to. As logical guarantees they are trivial: `Unit` is a
+subsingleton, so `() = abort ()`, and `validatorE ctx = abort ()` (or `= ()`)
+is provable for *any* `ctx` by `Subsingleton.elim`. Success-vs-failure of a
+`Data → Unit` validator is not distinguishable at the Lean level at all (this is
+not special to this style — the earlier "only provable here" claim was wrong).
+The meaningful accept/reject content lives elsewhere:
+- the **`Bool`** decision — `HelloWorldFusedCorrect.validatorCore_iff` (Lean, kernel-checked);
+- the compiled term's **`Halt`/`Error`** — `HelloWorldCrashCert` (PLC/CEK level).
 -/
 
 namespace Poe.Experiments.HelloWorldParsed
@@ -187,7 +193,7 @@ def validatorE (ctx : Data) : Unit :=
   else
     Poe.Prelude.abort ()
 
--- ── Key theorems ─────────────────────────────────────────────────────
+-- ── Structural theorems (subsingleton-trivial — see the header caveat) ──
 
 theorem validatorE_bad (ctx : Data) (h : ¬WellFormed ctx) :
     validatorE ctx = Poe.Prelude.abort () := by
