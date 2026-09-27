@@ -2,25 +2,11 @@ import Poe.Prelude
 import Poe.PlutusData
 
 /-!
-# Multi-signature wallet: a coroutine contract
+# Multi-signature wallet
 
 From the EUTxO paper (Chapman, Knispel, Kovalev, Wadler, 2019).
 
-## The coroutine view
-
-A stateful EUTxO contract is a **coroutine**:
-- The *datum* is the current **suspension point** (continuation).
-- The *redeemer* is the **resume event** (input to the next step).
-- The *validator* IS the **step function** of the state machine.
-- Acceptance means "advance one step and store the new suspension in an output UTxO".
-
-```
-  datum (state) ──step──▶ next state ──stored in──▶ output datum
-                 ▲
-                 │ redeemer (input)
-```
-
-## The multisig state machine
+## The state machine
 
 ```
                 Propose(κ, deadline)
@@ -79,24 +65,40 @@ private def elemBytes (x : ByteArray) : List ByteArray → Bool
   | []      => false
   | y :: ys => x == y || elemBytes x ys
 
+/-- Filter a `List Data` down to just the `B` payloads.
+    Replaces `List.filterMap` (which compiles through `Array.mkEmpty`, an
+    extern not in the translation fragment). -/
+private def decodeBytes : List Data → List ByteArray
+  | []            => []
+  | .b s :: rest  => s :: decodeBytes rest
+  | _ :: rest     => decodeBytes rest
+
+/-- Length of a `List ByteArray` as `Int`.
+    Replaces `List.length` (returns `Nat`, whose comparison uses `Nat.ble`,
+    an extern not in the fragment) with `Int`-valued counting so we can use
+    `lessThanInteger` directly. -/
+private def listLength : List ByteArray → Int
+  | []     => 0
+  | _ :: t => listLength t + 1
+
 -- ---------------------------------------------------------------------------
 -- Parameters (baked into the script at deploy time)
 -- ---------------------------------------------------------------------------
 
 structure Params where
   sigsAuth : List ByteArray  -- authorised public key hashes
-  minSigs  : Nat             -- required signature count (n)
+  minSigs  : Int             -- required signature count (n) as Int for on-chain comparison
 
 -- ---------------------------------------------------------------------------
 -- On-chain state (datum) and input (redeemer) types
 -- ---------------------------------------------------------------------------
 
-/-- Datum: the coroutine's current suspension point. -/
+/-- Datum: the current state of the contract. -/
 inductive State where
   | Holding : State
   | Collect : (payee : ByteArray) → (deadline : Int) → (sigs : List ByteArray) → State
 
-/-- Redeemer: the event that resumes the coroutine. -/
+/-- Redeemer: the input to the next transition. -/
 inductive Input where
   | Propose : (payee : ByteArray) → (deadline : Int) → Input
   | Add     : (sig : ByteArray) → Input
@@ -130,7 +132,7 @@ def InputOk (r : Data) : Prop :=
 def decodeState : ∀ d, StateOk d → State
   | .constr 0 [],                    _  => .Holding
   | .constr 1 [.b κ, .i d, .list l], _  =>
-      .Collect κ d (l.filterMap fun | .b s => some s | _ => none)
+      .Collect κ d (decodeBytes l)
 
 def decodeInput : ∀ r, InputOk r → Input
   | .constr 0 [.b κ, .i d], _ => .Propose κ d
@@ -144,7 +146,7 @@ def encodeState : State → Data
   | .Collect κ d sigs   => .constr 1 [.b κ, .i d, .list (sigs.map .b)]
 
 -- ---------------------------------------------------------------------------
--- Pure step function (the heart of the coroutine)
+-- Pure step function
 -- ---------------------------------------------------------------------------
 
 /-- Add a signature if it is authorised and not already present. -/
@@ -170,9 +172,9 @@ def step (params : Params) (txSigs : List ByteArray) (now : Int)
         addSig sig params sigs |>.map (.Collect κ d ·)
       else none
   | .Collect _ _ sigs, .Pay =>
-      -- Enough signatures collected?
-      if sigs.length ≥ params.minSigs then some .Holding
-      else none
+      -- Enough signatures collected? (Int comparison → lessThanInteger)
+      if listLength sigs < params.minSigs then none
+      else some .Holding
   | .Collect _ d _, .Cancel =>
       -- Deadline must have expired
       if now > d then some .Holding
@@ -245,9 +247,7 @@ def WellFormed (ctx : Data) : Prop :=
 
     Ghost-only (Prop — erased in compiled UPLC).  Making this a decidable
     on-chain check requires iterating over `txInfo.outputs`, which is
-    left as future work.  For now the guarantee lives at the Lean level:
-    any proof of `OutputCarries txInfo s` witnesses that the continuation
-    really is present in the transaction. -/
+    left as future work. -/
 def OutputCarries (txInfo : Data) (nextState : State) : Prop :=
   ∃ (addr val ref : Data) (outputs pre suf : List Data),
     txInfo = .constr 0 (pre ++ [.list outputs] ++ suf) ∧
@@ -257,10 +257,10 @@ def OutputCarries (txInfo : Data) (nextState : State) : Prop :=
 -- The validator
 -- ---------------------------------------------------------------------------
 
-/-- The multisig coroutine validator.
+/-- The multisig validator.
 
-    Runs the step function and checks that a next-state continuation
-    is deposited into an output (ghost check — see `OutputCarries`). -/
+    Runs the step function; `OutputCarries` (ghost) asserts the new state
+    is deposited in an output. -/
 def validatorE (params : Params) (ctx : Data) (wf : WellFormed ctx) : Unit :=
   match ctx, wf with
   | .constr 0 [txInfo, redeemer, scriptInfo], ⟨hSigs, hUB, hDatum, hInput⟩ =>

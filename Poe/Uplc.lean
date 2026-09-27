@@ -77,6 +77,10 @@ inductive Builtin
   | encodeUtf8
   | unConstrData
   | unIData
+  | iData
+  | bData
+  | listData
+  | constrData
   | fstPair
   | sndPair
   | chooseData
