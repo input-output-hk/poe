@@ -429,8 +429,11 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
           let body ← translateCode (ctx.bind listParam.fvarId) code
           return .app (.lam listParam.binderName.toString body)
             (.app nativeListToSoPTerm (.app (.builtin .unListData) discr))
+        | ``Poe.PlutusData.Data.i, #[intParam] =>
+          let body ← translateCode (ctx.bind intParam.fvarId) code
+          return .app (.lam intParam.binderName.toString body) (.app (.builtin .unIData) discr)
         | ``Poe.PlutusData.Data.i, _ =>
-          throwError "translator: Data.i (integer-as-Data) not yet handled (out of fragment)"
+          throwError "translator: Data.i single-branch has unexpected param shape"
         | _, _ => throwError "translator: unexpected Data constructor {ctorName}"
       | _ =>
         -- Multi-branch path: build a `chooseData` dispatch.
@@ -482,11 +485,17 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
               pure (.app (.lam byteParam.binderName.toString body) (.app (.builtin .unBData) discr))
             | _ => throwError "translator: Data.b alt in multi-branch has unexpected param shape"
           | none => pure defaultTerm
-        -- Int branch: needs unIData (not yet in Poe's builtin set).
+        -- Int branch: bind via unIData.
         let intBranch : Uplc.Term ← do
           match findAlt ``Poe.PlutusData.Data.i with
-          | some _ => throwError "translator: Data.i with explicit alt requires unIData (not yet handled)"
-          | none   => pure defaultTerm
+          | some (allPs, c) =>
+            let ps := allPs.filter fun p => !p.type.isErased
+            match ps with
+            | #[intParam] =>
+              let body ← translateCode (ctx.bind intParam.fvarId) c
+              pure (.app (.lam intParam.binderName.toString body) (.app (.builtin .unIData) discr))
+            | _ => throwError "translator: Data.i alt in multi-branch has unexpected param shape"
+          | none => pure defaultTerm
         -- Map branch: no Data.map constructor in Poe's type — always use default.
         let mapBranch := defaultTerm
         -- (force [[[[[(force (builtin chooseData)) discr]
@@ -552,7 +561,7 @@ partial def translateCode (ctx : Ctx) : Code → CoreM Uplc.Term
 
 partial def translateDecl (decl : Decl) : CoreM Uplc.Term := do
   let .code code := decl.value
-    | throwError "translator: extern declarations are not in the fragment"
+    | throwError "translator: extern declaration '{decl.name}' is not in the fragment"
   let recursive := codeMentionsSelf decl.name code
   -- Ghost (`lcErased`-typed) params — e.g. a `y ≠ 0` proof — get no lambda
   -- binder at all, matching `translateArgs` dropping the corresponding
