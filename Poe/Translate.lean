@@ -318,9 +318,12 @@ partial def translateConstCall (ctx : Ctx) (declName : Name) (args : Array Arg) 
   | ``Poe.PlutusData.decodeByteStringList, #[a] =>
     return .app decodeByteStringListTerm (← translateArg ctx a)
   | ``Poe.PlutusData.constrTag, #[a] => return constrTagTerm (← translateArg ctx a)
+  | ``Poe.PlutusData.unIData, #[a] => return .app (.builtin .unIData) (← translateArg ctx a)
   | ``Poe.PlutusData.field0, #[a] => return fieldAtTerm 0 (← translateArg ctx a)
   | ``Poe.PlutusData.field1, #[a] => return fieldAtTerm 1 (← translateArg ctx a)
   | ``Poe.PlutusData.field2, #[a] => return fieldAtTerm 2 (← translateArg ctx a)
+  | ``Poe.PlutusData.field3, #[a] => return fieldAtTerm 3 (← translateArg ctx a)
+  | ``Poe.PlutusData.field7, #[a] => return fieldAtTerm 7 (← translateArg ctx a)
   | ``Poe.PlutusData.field8, #[a] => return fieldAtTerm 8 (← translateArg ctx a)
   | _, _ =>
     -- Constructor application (`List.cons`, ...): erased/type args are the
