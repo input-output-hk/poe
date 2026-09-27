@@ -8,3 +8,6 @@ require PlutusCore from git
 
 @[default_target]
 lean_lib «Poe» where
+
+lean_exe «poe» where
+  root := `PoeMain
